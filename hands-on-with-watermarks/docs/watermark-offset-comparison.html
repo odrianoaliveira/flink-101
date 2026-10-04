@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watermarks: earliest-offset vs latest-offset</title>
+<style>
+  :root{
+    --bg:#0b1120; --panel:#0f172a; --panel2:#111c31; --border:#1e293b;
+    --text:#e2e8f0; --muted:#94a3b8;
+    --green:#22c55e; --red:#f43f5e; --amber:#f59e0b; --sky:#38bdf8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:32px 20px 64px}
+  h1{font-size:24px; margin:0 0 6px; letter-spacing:-.01em}
+  .sub{color:var(--muted); margin:0 0 22px; max-width:74ch}
+  .sub code{background:#111c31; padding:1px 5px; border-radius:4px; font-size:.9em}
+  .controls{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:20px}
+  button{
+    background:#1e293b; color:var(--text); border:1px solid #334155; border-radius:8px;
+    padding:8px 14px; font:inherit; font-size:14px; cursor:pointer; transition:background .12s;
+  }
+  button:hover{background:#334155}
+  button:focus-visible{outline:2px solid var(--sky); outline-offset:2px}
+  .speed{display:flex; align-items:center; gap:8px; color:var(--muted); font-size:14px}
+  input[type=range]{accent-color:var(--amber); width:120px}
+  .legend{display:flex; gap:16px; align-items:center; color:var(--muted); font-size:13.5px; margin-left:auto; flex-wrap:wrap}
+  .legend span{display:inline-flex; align-items:center; gap:6px}
+  .sw{display:inline-block; width:11px; height:11px; border-radius:3px}
+  .sw-g{background:var(--green)} .sw-r{background:var(--red)}
+  .sw-a{background:var(--amber); height:3px; width:16px; border-radius:2px}
+  .panels{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px}
+  .panel h2{font-size:16px; margin:0 0 3px; display:flex; align-items:center; gap:8px}
+  .badge{font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; letter-spacing:.02em}
+  .badge.replay{background:rgba(56,189,248,.14); color:var(--sky); border:1px solid rgba(56,189,248,.35)}
+  .badge.live{background:rgba(34,197,94,.14); color:var(--green); border:1px solid rgba(34,197,94,.35)}
+  .tagline{color:var(--muted); font-size:13px; margin:0 0 12px; min-height:36px}
+  canvas{width:100%; height:300px; display:block; background:#0a1020; border-radius:10px}
+  .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:14px 0 10px}
+  .stat{background:var(--panel2); border-radius:9px; padding:9px 11px}
+  .stat .v{font-size:18px; font-weight:650; font-variant-numeric:tabular-nums}
+  .stat .k{font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:2px}
+  .real{font-size:12.5px; color:var(--muted); border-top:1px dashed var(--border); padding-top:9px}
+  .real b{color:#cbd5e1; font-weight:600}
+  .note{font-size:13px; color:var(--muted); margin:10px 0 0; padding-left:14px; position:relative}
+  .note::before{content:""; position:absolute; left:0; top:9px; width:6px; height:6px; border-radius:50%; background:var(--amber)}
+  .callout{
+    margin-top:20px; background:var(--panel); border:1px solid var(--border);
+    border-left:3px solid var(--sky); border-radius:10px; padding:15px 18px; font-size:14px;
+  }
+  .callout b{color:var(--sky)}
+  footer{margin-top:22px; color:var(--muted); font-size:13.5px; max-width:82ch}
+  footer strong{color:#cbd5e1}
+  @media (max-width:860px){ .panels{grid-template-columns:1fr} .legend{margin-left:0} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Watermarks: <code style="font-size:.8em">earliest-offset</code> vs <code style="font-size:.8em">latest-offset</code></h1>
+  <p class="sub">
+    A Kafka topic of clicks whose <b>event times are out of order by up to 5&nbsp;s</b>. The query uses
+    <code>WATERMARK FOR event_time AS event_time - INTERVAL '1' SECOND</code>, and a record is <b>late</b>
+    when its event time is at or below the current watermark. The only difference between the two panels is
+    <code>scan.startup.mode</code>.
+  </p>
+
+  <div class="controls">
+    <button id="play">Pause</button>
+    <button id="reset">Reset</button>
+    <label class="speed">Speed
+      <input id="speed" type="range" min="0.5" max="3" step="0.5" value="1">
+      <span id="speedval">1×</span>
+    </label>
+    <div class="legend">
+      <span><i class="sw sw-g"></i>on time</span>
+      <span><i class="sw sw-r"></i>late</span>
+      <span><i class="sw sw-a"></i>watermark</span>
+    </div>
+  </div>
+
+  <div class="panels">
+    <section class="panel" id="panelA">
+      <h2>earliest-offset <span class="badge replay">replays history</span></h2>
+      <p class="tagline">Starts at offset 0 and races through the backlog. Each 200&nbsp;ms watermark tick consumes roughly <b>&asymp;200&nbsp;s</b> of event time, so the watermark is left far behind the data.</p>
+      <canvas></canvas>
+      <div class="stats">
+        <div class="stat"><div class="v" data-k="total">0</div><div class="k">events (sample)</div></div>
+        <div class="stat"><div class="v" data-k="late">0</div><div class="k">late</div></div>
+        <div class="stat"><div class="v" data-k="pct">0%</div><div class="k">late %</div></div>
+      </div>
+      <div class="real">Real measured run (35&nbsp;s): <b>395,180</b> events &rarr; <b>1,576</b> late (<b>0.4%</b>)</div>
+      <p class="note">Flink emits a watermark only every ~200&nbsp;ms &mdash; not per event. While replaying, the watermark cannot keep up, so practically nothing looks late.</p>
+    </section>
+
+    <section class="panel" id="panelB">
+      <h2>latest-offset <span class="badge live">at the live head</span></h2>
+      <p class="tagline">Starts at the live head and reads only new records. Each 200&nbsp;ms tick consumes roughly <b>&asymp;0.8&nbsp;s</b> of event time, so the watermark tracks the data closely.</p>
+      <canvas></canvas>
+      <div class="stats">
+        <div class="stat"><div class="v" data-k="total">0</div><div class="k">events (sample)</div></div>
+        <div class="stat"><div class="v" data-k="late">0</div><div class="k">late</div></div>
+        <div class="stat"><div class="v" data-k="pct">0%</div><div class="k">late %</div></div>
+      </div>
+      <div class="real">Real measured run (35&nbsp;s): <b>1,455</b> events &rarr; <b>954</b> late (<b>65.6%</b>)</div>
+      <p class="note">At the live head the watermark tracks real time, so events more than 1&nbsp;s out of order fall below it and are flagged late.</p>
+    </section>
+  </div>
+
+  <div class="callout">
+    <b>The bounded query you ran:</b> <code>... (SELECT * FROM ooo_clicks LIMIT 1000)</code> with earliest-offset.
+    The 1000 rows drain in <b>under the first 200&nbsp;ms tick</b>, before any watermark exists, so <b>late = 0</b> exactly
+    &mdash; and the streaming job never finishes. That is why the exercise says an empty result, not a zero.
+  </div>
+
+  <footer>
+    The animation is a <strong>scaled schematic</strong> (a handful of sample points per tick); the counters and the
+    measured figures carry the real magnitudes. The takeaway: <strong>lateness is governed by how much event time the
+    reader consumes between watermark ticks</strong> &mdash; large during backlog replay (so lateness looks like zero),
+    small at the live head (so it becomes visible). Use <code>latest-offset</code> to study lateness; use
+    <code>earliest-offset</code> to backfill, but expect its watermark lag to mask it.
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var CFG = { TICKS: 20, POINTS: 40, JITTER: 5, TOL: 1, TICK_MS: 420 };
+
+  function mulberry32(a){
+    return function(){
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  function fmt(v){
+    if (v >= 1000) return (v/1000).toFixed(v>=10000?0:1) + "k s";
+    if (v >= 100) return Math.round(v) + " s";
+    if (v >= 10) return v.toFixed(0) + " s";
+    if (v >= 1) return v.toFixed(1) + " s";
+    return v.toFixed(2) + " s";
+  }
+
+  function createPanel(sel, span, seed){
+    var root = document.querySelector(sel);
+    return {
+      root: root, canvas: root.querySelector("canvas"),
+      span: span, seed: seed, rng: mulberry32(seed),
+      tick: 0, base: 0, prevFront: -Infinity, w: -Infinity,
+      events: [], steps: [], total: 0, late: 0,
+      xMax: CFG.TICKS * CFG.POINTS,
+      yMax: CFG.TICKS * span + CFG.JITTER * 1.15
+    };
+  }
+
+  function tickPanel(p){
+    if (p.tick >= CFG.TICKS) return false;
+    var k = p.tick, W = p.w;
+    for (var i = 0; i < CFG.POINTS; i++){
+      var d = (CFG.POINTS > 1 ? i/(CFG.POINTS-1) : 0) * p.span;
+      var t = p.base + d + p.rng() * CFG.JITTER;
+      var late = t <= W;
+      p.events.push({ x: k*CFG.POINTS + i, y: t, late: late });
+      p.total++; if (late) p.late++;
+    }
+    // The watermark that governs THIS tick was emitted at the end of the
+    // previous tick. Plot it over this tick's records so the line matches
+    // the colouring decision (late = at or below the line).
+    if (isFinite(W)){
+      p.steps.push({ x0: k*CFG.POINTS, x1: (k+1)*CFG.POINTS, v: W });
+    }
+    var maxT = p.base + p.span + CFG.JITTER;
+    if (maxT > p.prevFront) p.prevFront = maxT;
+    p.w = p.prevFront - CFG.TOL;
+    p.base += p.span;
+    p.tick++;
+    return true;
+  }
+
+  function drawPanel(p){
+    var c = p.canvas, ctx = c.getContext("2d");
+    var dpr = window.devicePixelRatio || 1;
+    var W = c.clientWidth, H = c.clientHeight;
+    if (!W || !H) return;
+    if (c.width !== Math.round(W*dpr) || c.height !== Math.round(H*dpr)){
+      c.width = Math.round(W*dpr); c.height = Math.round(H*dpr);
+    }
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,W,H);
+
+    var padL = 58, padR = 14, padT = 14, padB = 30;
+    var x0 = padL, x1 = W - padR, y0 = padT, y1 = H - padB;
+    var X = function(gx){ return x0 + (gx / p.xMax) * (x1 - x0); };
+    var Y = function(t){ return y1 - (t / p.yMax) * (y1 - y0); };
+
+    // grid + y labels
+    ctx.lineWidth = 1;
+    ctx.font = "11px system-ui,-apple-system,sans-serif";
+    for (var g = 0; g <= 4; g++){
+      var val = p.yMax * g / 4, yy = Y(val);
+      ctx.strokeStyle = "#15213a";
+      ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x1, yy); ctx.stroke();
+      ctx.fillStyle = "#64748b";
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText(fmt(val), x0 - 8, yy);
+    }
+    // baseline
+    ctx.strokeStyle = "#273449";
+    ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x1, y1); ctx.stroke();
+
+    // watermark stepped line
+    ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 2.5; ctx.beginPath();
+    var prevY = null;
+    for (var s = 0; s < p.steps.length; s++){
+      var st = p.steps[s], sy = Y(st.v);
+      ctx.moveTo(X(st.x0), sy); ctx.lineTo(X(st.x1), sy);
+      if (prevY !== null){ ctx.moveTo(X(st.x0), prevY); ctx.lineTo(X(st.x0), sy); }
+      prevY = sy;
+    }
+    ctx.stroke();
+
+    // events
+    for (var e = 0; e < p.events.length; e++){
+      var ev = p.events[e], px = X(ev.x), py = Y(ev.y);
+      if (ev.late){ ctx.fillStyle = "#f43f5e"; ctx.fillRect(px-1.9, py-1.9, 3.8, 3.8); }
+      else        { ctx.fillStyle = "#22c55e"; ctx.fillRect(px-1,   py-1,   2,   2); }
+    }
+
+    // axis titles
+    ctx.fillStyle = "#64748b";
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillText("record order \u2192", (x0+x1)/2, y1 + 8);
+    ctx.save();
+    ctx.translate(13, (y0+y1)/2); ctx.rotate(-Math.PI/2);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("event time", 0, 0);
+    ctx.restore();
+  }
+
+  var panels = [
+    createPanel("#panelA", 200, 1337),
+    createPanel("#panelB", 0.8, 4242)
+  ];
+
+  function updateStats(){
+    for (var i = 0; i < panels.length; i++){
+      var p = panels[i];
+      p.root.querySelector('[data-k="total"]').textContent = p.total.toLocaleString();
+      p.root.querySelector('[data-k="late"]').textContent  = p.late.toLocaleString();
+      p.root.querySelector('[data-k="pct"]').textContent   = (p.total ? (100*p.late/p.total) : 0).toFixed(1) + "%";
+    }
+  }
+
+  function resetPanel(p){
+    p.rng = mulberry32(p.seed);
+    p.tick = 0; p.base = 0; p.prevFront = -Infinity; p.w = -Infinity;
+    p.events = []; p.steps = []; p.total = 0; p.late = 0;
+  }
+
+  var playing = true, acc = 0, lastTs = 0, rafId = null;
+  var playBtn = document.getElementById("play");
+  var speedEl = document.getElementById("speed");
+  var speedVal = document.getElementById("speedval");
+  var speed = 1;
+
+  function frame(ts){
+    if (!playing) return;
+    if (!lastTs) lastTs = ts;
+    acc += (ts - lastTs) * speed;
+    lastTs = ts;
+    var advanced = false;
+    while (acc >= CFG.TICK_MS){
+      acc -= CFG.TICK_MS;
+      for (var i = 0; i < panels.length; i++){ if (tickPanel(panels[i])) advanced = true; }
+    }
+    for (var j = 0; j < panels.length; j++) drawPanel(panels[j]);
+    if (advanced) updateStats();
+
+    var done = panels.every(function(p){ return p.tick >= CFG.TICKS; });
+    if (done){ playing = false; playBtn.textContent = "Replay"; return; }
+    rafId = requestAnimationFrame(frame);
+  }
+
+  function play(){
+    if (playing) return;
+    if (panels.every(function(p){ return p.tick >= CFG.TICKS; })) resetAll();
+    playing = true; lastTs = 0; playBtn.textContent = "Pause";
+    rafId = requestAnimationFrame(frame);
+  }
+  function pause(){ playing = false; if (rafId) cancelAnimationFrame(rafId); playBtn.textContent = "Play"; }
+  function resetAll(){
+    if (rafId) cancelAnimationFrame(rafId);
+    for (var i = 0; i < panels.length; i++){ resetPanel(panels[i]); drawPanel(panels[i]); }
+    updateStats(); acc = 0; lastTs = 0;
+  }
+
+  playBtn.addEventListener("click", function(){ playing ? pause() : play(); });
+  document.getElementById("reset").addEventListener("click", function(){ resetAll(); play(); });
+
+  speedEl.addEventListener("input", function(){
+    speed = parseFloat(speedEl.value) || 1;
+    speedVal.textContent = speed + "\u00d7";
+  });
+
+  window.addEventListener("resize", function(){
+    for (var i = 0; i < panels.length; i++) drawPanel(panels[i]);
+  });
+
+  // ?done fast-forwards to the final state (deterministic, for screenshots/tests).
+  var fastForward = /(\?|&)done\b/.test(location.search);
+  if (fastForward){
+    while (panels.some(function(p){ return p.tick < CFG.TICKS; })){
+      for (var t = 0; t < panels.length; t++) tickPanel(panels[t]);
+    }
+  }
+
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  for (var i = 0; i < panels.length; i++) drawPanel(panels[i]);
+  updateStats();
+  if (reduce || fastForward){ playing = false; playBtn.textContent = "Replay"; }
+  else { rafId = requestAnimationFrame(frame); }
+})();
+</script>
+</body>
+</html>
