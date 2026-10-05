@@ -13,10 +13,11 @@ treat each directory as fully independent.
 
 ## Port status
 
-The course has five hands-on exercises; two are ported so far:
+The course has several hands-on exercises and topic modules; three are ported so far:
 
 - `hands-on-with-watermarks/` — "Time and watermarks" exercise (Flink 1.20.5).
 - `streaming-analytics/` — "Streaming analytics" exercise (Flink 2.2.1).
+- `streaming-joins/` — "Streaming joins" module (Flink 2.2.1): temporal + interval joins.
 
 Not yet ported: "Getting started with Confluent Cloud", "MATCH_RECOGNIZE",
 "Stream enrichment".
@@ -62,8 +63,25 @@ Do not mix these. The `streaming-analytics` SQL files use bare (2.x) syntax.
   options, e.g. `sql-client.sh embedded -Drest.address=jobmanager -Drest.port=8081`.
 
 ### Shared host ports — one exercise at a time
-Both exercises bind Flink Web UI `:8081` and Kafka `:9092`, so they cannot run
+All exercises bind Flink Web UI `:8081` and Kafka `:9092`, so they cannot run
 simultaneously. Tear down with `docker compose down -v` before switching.
+
+### Versioned tables + temporal joins (upsert-kafka)
+For event-time temporal joins (`FOR SYSTEM_TIME AS OF`), the versioned (right)
+table must have BOTH a `PRIMARY KEY` and a rowtime attribute. Model a versioned
+table with the `upsert-kafka` connector (bundled in the Kafka SQL connector jar)
+on a **compacted** topic keyed by the PK:
+
+- `'connector' = 'upsert-kafka'`, `'key.format' = 'raw'` (key = raw INT bytes,
+  big-endian), `'value.format' = 'json'`, `'value.fields-include' = 'EXCEPT_KEY'`.
+- The producer must key records by the PK and exclude the PK column from the value.
+- `upsert-kafka` does **not** support `scan.startup.mode` (it reads from the
+  beginning by default); setting it fails DDL validation.
+- Add a rowtime attribute to the versioned table (e.g. `update_time
+  TIMESTAMP_LTZ(3) METADATA FROM 'timestamp'` + `WATERMARK FOR update_time AS
+  update_time`) — required for event-time temporal joins.
+- Interval joins require both inputs to be append-only with watermarks, and use
+  `BETWEEN ... AND ... + INTERVAL '...'` on the event-time attribute.
 
 ### Kafka is KRaft, pinned to 3.9
 Kafka image is `bitnamilegacy/kafka:3.9.0`, single-node KRaft (no ZooKeeper).
