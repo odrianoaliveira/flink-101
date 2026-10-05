@@ -15,17 +15,18 @@ Each ported exercise lives in its own directory with its own `docker-compose.yml
 
 ## Course exercise → local port
 
-The course has five hands-on exercises. Two are ported here so far:
+The course has several hands-on exercises and topic modules. Three are ported here so far:
 
 | Course exercise | Local directory | Flink | Kafka | Status |
 |---|---|---|---|---|
 | Time and watermarks | [`hands-on-with-watermarks`](./hands-on-with-watermarks) | 1.20.5 | 3.9 | ✅ Ported |
 | Streaming analytics | [`streaming-analytics`](./streaming-analytics) | 2.2.1 | 3.9 | ✅ Ported |
+| Streaming joins | [`streaming-joins`](./streaming-joins) | 2.2.1 | 3.9 | ✅ Ported |
 | Getting started with Confluent Cloud | — | — | — | Not yet ported |
 | MATCH_RECOGNIZE | — | — | — | Not yet ported |
 | Stream enrichment | — | — | — | Not yet ported |
 
-> **Note:** both ported exercises bind the same host ports (Flink Web UI `:8081`,
+> **Note:** all ported exercises bind the same host ports (Flink Web UI `:8081`,
 > Kafka `:9092`), so they cannot run at the same time. Run
 > `docker compose down -v` in one before starting the other.
 
@@ -73,10 +74,16 @@ translation table, and a suggested learning path.
 │   ├── producer/               # click_producer.py
 │   ├── sql/                    # 00_init.sql + exercise scripts
 │   └── README.md
-└── streaming-analytics/        # "Streaming analytics" exercise (Flink 2.2.1)
+├── streaming-analytics/        # "Streaming analytics" exercise (Flink 2.2.1)
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   ├── producer/               # order_producer.py
+│   ├── sql/                    # 00_init.sql + exercise scripts
+│   └── README.md
+└── streaming-joins/            # "Streaming joins" module (Flink 2.2.1)
     ├── docker-compose.yml
     ├── Dockerfile
-    ├── producer/               # order_producer.py
+    ├── producer/               # join_producer.py
     ├── sql/                    # 00_init.sql + exercise scripts
     └── README.md
 ```
@@ -87,5 +94,5 @@ translation table, and a suggested learning path.
   on Flink's built-in `generic_in_memory` catalog, so the course's
   fully-qualified names (`examples.marketplace.clicks`,
   `examples.marketplace.orders`) resolve unchanged.
-- The watermarks exercise pins Flink **1.20.5** (latest 1.x LTS), while
-  `streaming-analytics` uses Flink **2.2.1** to demonstrate 2.x window-TVF syntax.
+- The watermarks exercise pins Flink **1.20.5** (latest 1.x LTS); the other two
+  exercises use Flink **2.2.1**.
